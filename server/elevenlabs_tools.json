@@ -1,0 +1,50 @@
+{
+  "name": "Heybassh British English Teacher tools",
+  "notes": "Paste these as webhook tools on the ElevenLabs agent. Replace BACKEND_URL with http://localhost:7860 while testing locally (use a public tunnel such as ngrok), or your Railway URL after deploy.",
+  "tools": [
+    {
+      "name": "get_student_lesson",
+      "description": "Load the student's current British English lesson, CEFR level, strengths, weaknesses, and curriculum details. Call this at the start of every session.",
+      "type": "webhook",
+      "api_schema": {
+        "url": "BACKEND_URL/webhook/english-teacher/student-lesson",
+        "method": "GET",
+        "query_params_schema": {
+          "properties": {
+            "student_id": {
+              "type": "string",
+              "description": "Student identifier. Use john if unknown."
+            }
+          },
+          "required": ["student_id"]
+        }
+      }
+    },
+    {
+      "name": "save_lesson_progress",
+      "description": "Save lesson results after teaching or assessing the student. A completed lesson with score 70 or more unlocks the next lesson.",
+      "type": "webhook",
+      "api_schema": {
+        "url": "BACKEND_URL/webhook/english-teacher/update-progress",
+        "method": "POST",
+        "request_body_schema": {
+          "type": "object",
+          "properties": {
+            "student_id": { "type": "string", "description": "Student identifier. Use john if unknown." },
+            "lesson_number": { "type": "integer", "description": "Lesson that was just taught, 1-22." },
+            "score": { "type": "integer", "description": "Overall lesson score from 0 to 100." },
+            "lesson_completed": { "type": "boolean", "description": "True if the lesson was finished." },
+            "strengths": { "type": "array", "items": { "type": "string" } },
+            "weaknesses": { "type": "array", "items": { "type": "string" } },
+            "mistakes": { "type": "array", "items": { "type": "string" } },
+            "new_vocabulary": { "type": "array", "items": { "type": "string" } },
+            "grammar_scores": { "type": "object" },
+            "teacher_summary": { "type": "string" },
+            "recommended_next_step": { "type": "string" }
+          },
+          "required": ["student_id", "lesson_number", "score", "lesson_completed"]
+        }
+      }
+    }
+  ]
+}
