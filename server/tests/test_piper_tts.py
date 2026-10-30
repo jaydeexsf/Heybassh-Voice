@@ -8,7 +8,8 @@ import sys
 import types
 import unittest
 import wave
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 
 def _install_aiohttp_stub() -> None:
@@ -53,9 +54,11 @@ import aiohttp
 from pipecat.frames.frames import ErrorFrame, TTSAudioRawFrame
 
 from piper_tts import (
+    DEFAULT_PIPER_TTS_VOICE,
     PiperHttpTTSService,
     PiperTTSError,
     decode_wav_to_pcm16_mono,
+    huggingface_voice_url,
 )
 
 
@@ -131,6 +134,8 @@ def _service(session: FakeSession, sample_rate: int = 16000) -> PiperHttpTTSServ
         base_url="https://piper.example",
         aiohttp_session=session,  # type: ignore[arg-type]
         request_timeout=5.0,
+        engine="http",
+        voice=DEFAULT_PIPER_TTS_VOICE,
     )
     tts._sample_rate = sample_rate
     tts.start_tts_usage_metrics = MagicMock(side_effect=lambda *args, **kwargs: asyncio.sleep(0))  # type: ignore[method-assign]
@@ -180,7 +185,10 @@ class PiperHttpTTSServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(session.posts), 1)
         self.assertEqual(session.posts[0]["url"], "https://piper.example/tts")
-        self.assertEqual(session.posts[0]["json"], {"text": "Hello from Piper."})
+        self.assertEqual(
+            session.posts[0]["json"],
+            {"text": "Hello from Piper.", "voice": DEFAULT_PIPER_TTS_VOICE},
+        )
         self.assertEqual(session.posts[0]["headers"]["Content-Type"], "application/json")
 
         audio_frames = [frame for frame in frames if isinstance(frame, TTSAudioRawFrame)]
@@ -234,6 +242,7 @@ class PiperHttpTTSServiceTests(unittest.IsolatedAsyncioTestCase):
         tts = PiperHttpTTSService(
             base_url="https://piper.example/",
             aiohttp_session=session,  # type: ignore[arg-type]
+            engine="http",
         )
         tts._sample_rate = 16000
         tts.start_tts_usage_metrics = MagicMock(side_effect=lambda *args, **kwargs: asyncio.sleep(0))  # type: ignore[method-assign]
@@ -250,6 +259,47 @@ class PiperHttpTTSServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(frames), 1)
         self.assertIsInstance(frames[0], ErrorFrame)
         self.assertIn("empty", frames[0].error.lower())
+
+    async def test_local_engine_skips_http_and_emits_audio(self):
+        samples = [321, -654]
+        wav_bytes = _make_wav(samples, sample_rate=16000)
+        session = FakeSession()
+        tts = PiperHttpTTSService(
+            base_url="https://piper.example",
+            aiohttp_session=session,  # type: ignore[arg-type]
+            engine="local",
+            voice="en_GB-cori-medium",
+        )
+        tts._sample_rate = 16000
+        tts._model_path = Path("en_GB-cori-medium.onnx")
+        tts._piper_voice = object()
+        tts.start_tts_usage_metrics = MagicMock(side_effect=lambda *args, **kwargs: asyncio.sleep(0))  # type: ignore[method-assign]
+        tts.start_ttfb_metrics = MagicMock(side_effect=lambda *args, **kwargs: asyncio.sleep(0))  # type: ignore[method-assign]
+        tts.stop_ttfb_metrics = MagicMock(side_effect=lambda *args, **kwargs: asyncio.sleep(0))  # type: ignore[method-assign]
+
+        async def fake_to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        with (
+            patch("piper_tts.synthesize_local_wav", return_value=wav_bytes),
+            patch("asyncio.to_thread", side_effect=fake_to_thread),
+        ):
+            frames = [frame async for frame in tts.run_tts("Hello Britain.", "ctx-9")]
+
+        self.assertEqual(session.posts, [])
+        audio_frames = [frame for frame in frames if isinstance(frame, TTSAudioRawFrame)]
+        self.assertTrue(audio_frames)
+        self.assertEqual(b"".join(frame.audio for frame in audio_frames), _pack_pcm16(samples))
+
+
+class VoiceDownloadTests(unittest.TestCase):
+    def test_british_voice_huggingface_url(self):
+        url = huggingface_voice_url("en_GB-cori-medium", ".onnx")
+        self.assertIn("/en/en_GB/cori/medium/en_GB-cori-medium.onnx", url)
+
+    def test_invalid_voice_name_raises(self):
+        with self.assertRaises(PiperTTSError):
+            huggingface_voice_url("not-a-voice", ".onnx")
 
 
 if __name__ == "__main__":

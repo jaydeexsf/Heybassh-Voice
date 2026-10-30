@@ -218,6 +218,11 @@ __marimo__/
 # Student progress store
 server/data/*.json
 
+# Downloaded Piper ONNX voices
+server/voices/*.onnx
+server/voices/*.onnx.json
+server/voices/*.part
+
 # Node.js (client/)
 client/node_modules/
 client/.next/

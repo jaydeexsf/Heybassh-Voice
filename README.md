@@ -5,14 +5,14 @@ A British English teacher voice agent: Speech-to-Text → LLM → Text-to-Speech
 ## Configuration
 
 - **Bot Type**: Web
-- **Transport(s)**: WebSocket, SmallWebRTC
+- **Transport(s)**: Daily (Pipecat Cloud), WebSocket, SmallWebRTC
 - **Pipeline**: Cascade
   - **STT**: Deepgram
   - **LLM**: Google Gemini
-  - **TTS**: Self-hosted Piper HTTP API
+  - **TTS**: Local Piper British voice (`en_GB-cori-medium`)
 - **Tools**: load the current 22-lesson curriculum and save scores (pass at 70+)
 
-This is **not** production-ready until you have tested it locally and set Vercel/Railway environment variables. Progress is stored in a JSON file on the bot server (fine for testing; use a database later if you need it to survive Railway restarts).
+Progress is stored in a JSON file on the bot instance (fine for testing; it will not survive Cloud instance restarts).
 
 ## Setup
 
@@ -35,12 +35,19 @@ This is **not** production-ready until you have tested it locally and set Vercel
    ```bash
    cp .env.example .env
    # Required: DEEPGRAM_API_KEY (STT), GOOGLE_API_KEY (LLM)
+   # TTS defaults to local British Piper voice en_GB-cori-medium (downloaded on first run)
    ```
 
 4. **Run the bot**:
 
    ```bash
    uv run bot.py
+   ```
+
+   For a local Daily room (needs `DAILY_API_KEY`):
+
+   ```bash
+   uv run bot.py -t daily
    ```
 
 ### Client
@@ -62,6 +69,8 @@ This is **not** production-ready until you have tested it locally and set Vercel
    ```bash
    cp env.example .env.local
    ```
+
+   For local WebSocket/SmallWebRTC, set `BOT_START_URL=http://localhost:7860/start` and pick that transport in the UI.
 
 4. **Run development server**:
 
@@ -92,36 +101,49 @@ Unit tests:
 
 ```bash
 cd server
-uv run python -m unittest tests.test_english_teacher
+uv run python -m unittest tests.test_english_teacher tests.test_piper_tts
 ```
 
 `server/elevenlabs_tools.json` is the webhook tool list to paste into ElevenLabs. While testing from ElevenLabs on your laptop, the webhook URL must be public (for example an ngrok tunnel to port 7860). The local Pipecat voice UI does **not** need that: it calls the tools in-process.
 
 ## Deploy
 
-### Backend (Railway)
+### Pipecat Cloud (agent)
 
-1. Create a Railway service from `server/`.
-2. Set `DEEPGRAM_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_MODEL`, and `PIPER_TTS_BASE_URL`.
-3. After you have a Vercel URL, set `PIPECAT_ALLOWED_ORIGINS` to that origin (plus `http://localhost:3000` if you still test locally).
-4. Optional: `ELEVENLABS_WEBHOOK_SECRET` and send it as `Authorization: Bearer <secret>` from ElevenLabs.
+1. Put these keys in secret set `heybasshvoices`:
+   - `DEEPGRAM_API_KEY`
+   - `GOOGLE_API_KEY`
+   - `GOOGLE_MODEL` (`gemini-3-flash-preview`)
+   - `PIPER_TTS_ENGINE=local`
+   - `PIPER_TTS_VOICE=en_GB-cori-medium`
+2. In the agent GitHub settings, use branch `main`, Dockerfile path `server/Dockerfile`, subdirectory `server`, and attach `heybasshvoices`.
+3. Use profile `agent-2x` (Silero + local Piper). See `pcc-deploy.toml`.
+4. Push to `main` (or click Deploy). Start a session with Daily:
+
+   ```bash
+   curl --request POST "https://api.pipecat.daily.co/v1/public/heybassh/start" \
+     --header "Authorization: Bearer pk_YOUR_PUBLIC_KEY" \
+     --header "Content-Type: application/json" \
+     --data "{\"createDailyRoom\": true}"
+   ```
 
 ### Frontend (Vercel)
 
 1. Set the Vercel root directory to `client`.
-2. Set `BOT_START_URL` to `https://<your-railway-host>/start`.
-
-Do not deploy until the local voice session can load John's lesson and save a passing score.
+2. Set `BOT_START_URL` to `https://api.pipecat.daily.co/v1/public/heybassh/start`.
+3. Set `BOT_START_PUBLIC_API_KEY` to your Pipecat Cloud **public** API key.
 
 ## Project Structure
 
 ```
 Heybassh/
-├── server/              # Python bot server
+├── pcc-deploy.toml      # Pipecat Cloud GitHub deploy settings
+├── server/              # Python bot
 │   ├── bot.py           # Voice pipeline + teacher persona
 │   ├── english_teacher.py
 │   ├── english_teacher_api.py
 │   ├── english_teacher_tools.py
+│   ├── piper_tts.py
 │   ├── elevenlabs_tools.json
 │   └── Dockerfile
 ├── client/              # Next.js voice UI

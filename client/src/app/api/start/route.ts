@@ -19,6 +19,19 @@ function publicBotWsUrl(fallback: string): string {
   }
 }
 
+function normalizeStartResponse(data: Record<string, unknown>) {
+  if (typeof data.dailyRoom === 'string' && data.url == null) {
+    data.url = data.dailyRoom;
+  }
+  if (typeof data.dailyToken === 'string' && data.token == null) {
+    data.token = data.dailyToken;
+  }
+  if (data.wsUrl && typeof data.wsUrl === 'string') {
+    data.wsUrl = publicBotWsUrl(data.wsUrl);
+  }
+  return data;
+}
+
 export async function POST(request: Request) {
   const botStartUrl =
     process.env.BOT_START_URL || 'http://localhost:7860/start';
@@ -30,7 +43,6 @@ export async function POST(request: Request) {
   }
 
   try {
-    // Parse the request body from the client
     const requestData = await request.json();
 
     const headers: Record<string, string> = {
@@ -41,7 +53,6 @@ export async function POST(request: Request) {
       headers.Authorization = `Bearer ${process.env.BOT_START_PUBLIC_API_KEY}`;
     }
 
-    // Pass through the request data from the client
     const response = await fetch(botStartUrl, {
       method: 'POST',
       headers,
@@ -52,17 +63,13 @@ export async function POST(request: Request) {
       throw new Error(`Failed to connect to Pipecat: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as Record<string, unknown>;
 
     if (data.error) {
-      throw new Error(data.error);
+      throw new Error(String(data.error));
     }
 
-    if (data.wsUrl) {
-      data.wsUrl = publicBotWsUrl(data.wsUrl);
-    }
-
-    return NextResponse.json(data);
+    return NextResponse.json(normalizeStartResponse(data));
   } catch (error) {
     return NextResponse.json(
       { error: `Failed to process connection request: ${error}` },

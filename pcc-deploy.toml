@@ -1,0 +1,13 @@
+agent_name = "heybassh"
+secret_set = "heybasshvoices"
+agent_profile = "agent-2x"
+architecture = "arm64"
+
+[scaling]
+min_agents = 0
+
+[git]
+repo = "jaydeexsf/Heybassh-Voice"
+branch = "main"
+dockerfile_path = "server/Dockerfile"
+subdirectory = "server"

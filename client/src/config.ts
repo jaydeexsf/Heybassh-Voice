@@ -8,11 +8,12 @@ import type { APIRequest, TransportConnectionParams } from '@pipecat-ai/client-j
 export type TransportType = 'daily' | 'smallwebrtc' | 'websocket';
 
 export const AVAILABLE_TRANSPORTS: TransportType[] = [
+  'daily',
   'websocket',
   'smallwebrtc',
 ];
 
-export const DEFAULT_TRANSPORT: TransportType = 'websocket';
+export const DEFAULT_TRANSPORT: TransportType = 'daily';
 
 export const TRANSPORT_LABELS: Record<TransportType, string> = {
   daily: 'Daily',

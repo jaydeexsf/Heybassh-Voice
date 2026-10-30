@@ -1,15 +1,23 @@
-FROM python:3.12-slim
+FROM dailyco/pipecat-base:latest
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Enable bytecode compilation
+ENV UV_COMPILE_BYTECODE=1
 
-WORKDIR /app
+# Copy from the cache instead of linking since it's a mounted volume
+ENV UV_LINK_MODE=copy
 
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
+ENV PIPER_TTS_ENGINE=local
+ENV PIPER_TTS_VOICE=en_GB-cori-medium
 
-COPY . .
+# Install the project's dependencies using the lockfile and settings
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --locked --no-install-project --no-dev
 
-ENV HOST=0.0.0.0
-EXPOSE 7860
+# Agent modules (copy next to bot.py; do not COPY the whole tree over /app)
+COPY ./bot.py ./english_teacher.py ./english_teacher_api.py ./english_teacher_tools.py ./piper_tts.py ./
+COPY ./voices/README.md ./voices/README.md
 
-CMD ["sh", "-c", "uv run bot.py --host 0.0.0.0 --port ${PORT:-7860}"]
+# Bake the British Piper voice so sessions do not download 61MB at startup
+RUN PYTHONPATH=. uv run python -c "from piper_tts import ensure_piper_voice; ensure_piper_voice('en_GB-cori-medium')"
