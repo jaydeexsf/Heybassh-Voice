@@ -116,7 +116,7 @@ uv run python -m unittest tests.test_english_teacher tests.test_piper_tts
    - `GOOGLE_MODEL` (`gemini-3-flash-preview`)
    - `PIPER_TTS_ENGINE=local`
    - `PIPER_TTS_VOICE=en_GB-cori-medium`
-2. In the agent GitHub settings, use branch `main`, Dockerfile path `server/Dockerfile`, subdirectory `server`, and attach `heybasshvoices`.
+2. In the agent GitHub settings, use branch `main`, Dockerfile path `Dockerfile` (repo root), leave the build subdirectory empty, and attach `heybasshvoices`.
 3. Use profile `agent-2x` (Silero + local Piper). See `pcc-deploy.toml`.
 4. Push to `main` (or click Deploy). Start a session with Daily:
 
@@ -137,6 +137,7 @@ uv run python -m unittest tests.test_english_teacher tests.test_piper_tts
 
 ```
 Heybassh/
+├── Dockerfile           # Pipecat Cloud GitHub deploy (repo root)
 ├── pcc-deploy.toml      # Pipecat Cloud GitHub deploy settings
 ├── server/              # Python bot
 │   ├── bot.py           # Voice pipeline + teacher persona

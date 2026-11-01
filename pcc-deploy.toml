@@ -9,5 +9,4 @@ min_agents = 0
 [git]
 repo = "jaydeexsf/Heybassh-Voice"
 branch = "main"
-dockerfile_path = "server/Dockerfile"
-subdirectory = "server"
+dockerfile_path = "Dockerfile"

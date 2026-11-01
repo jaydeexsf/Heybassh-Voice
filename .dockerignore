@@ -1,0 +1,14 @@
+.git
+.github
+client
+**/.venv
+**/__pycache__
+**/.env
+**/.env.*
+server/tests
+server/data
+server/.dockerignore
+server/railway.toml
+server/voices/*.onnx
+server/voices/*.onnx.json
+server/voices/*.part
