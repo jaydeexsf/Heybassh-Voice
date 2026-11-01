@@ -1,23 +1,29 @@
-FROM dailyco/pipecat-base:latest
+FROM python:3.12-slim-bookworm
 
-# Enable bytecode compilation
-ENV UV_COMPILE_BYTECODE=1
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
-# Copy from the cache instead of linking since it's a mounted volume
-ENV UV_LINK_MODE=copy
+WORKDIR /app
 
-ENV PIPER_TTS_ENGINE=local
-ENV PIPER_TTS_VOICE=en_GB-cori-medium
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    espeak-ng \
+    libgomp1 \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install the project's dependencies using the lockfile and settings
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --locked --no-install-project --no-dev
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PIPER_TTS_ENGINE=local \
+    PIPER_TTS_VOICE=en_GB-cori-medium \
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:$PATH"
 
-# Agent modules (copy next to bot.py; do not COPY the whole tree over /app)
-COPY ./bot.py ./english_teacher.py ./english_teacher_api.py ./english_teacher_tools.py ./piper_tts.py ./
-COPY ./voices/README.md ./voices/README.md
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-install-project --no-dev
 
-# Bake the British Piper voice so sessions do not download 61MB at startup
+COPY bot.py english_teacher.py english_teacher_api.py english_teacher_tools.py piper_tts.py ./
+
 RUN PYTHONPATH=. uv run python -c "from piper_tts import ensure_piper_voice; ensure_piper_voice('en_GB-cori-medium')"
+
+EXPOSE 7860
+
+CMD ["sh", "-c", "exec python bot.py --host 0.0.0.0 --port ${PORT:-7860}"]

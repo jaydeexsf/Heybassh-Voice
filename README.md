@@ -5,7 +5,7 @@ A British English teacher voice agent: Speech-to-Text → LLM → Text-to-Speech
 ## Configuration
 
 - **Bot Type**: Web
-- **Transport(s)**: Daily (Pipecat Cloud), WebSocket, SmallWebRTC
+- **Transport(s)**: Daily (Render), WebSocket, SmallWebRTC
 - **Pipeline**: Cascade
   - **STT**: Deepgram
   - **LLM**: Google Gemini
@@ -108,37 +108,44 @@ uv run python -m unittest tests.test_english_teacher tests.test_piper_tts
 
 ## Deploy
 
-### Pipecat Cloud (agent)
+### Render (bot)
 
-1. Put these keys in secret set `heybasshvoices`:
+This repo’s root `Dockerfile` starts the local Pipecat runner (`POST /start`, `GET /health`) so Render can host it. Use a **Docker** web service, repo root as the build context, Dockerfile path `Dockerfile`, and leave the start command empty.
+
+1. In the Render service, set:
    - `DEEPGRAM_API_KEY`
    - `GOOGLE_API_KEY`
    - `GOOGLE_MODEL` (`gemini-3-flash-preview`)
+   - `DAILY_API_KEY` (required for Daily rooms)
    - `PIPER_TTS_ENGINE=local`
    - `PIPER_TTS_VOICE=en_GB-cori-medium`
-2. In the agent GitHub settings, use branch `main`, Dockerfile path `Dockerfile` (repo root), leave the build subdirectory empty, and attach `heybasshvoices`.
-3. Use profile `agent-2x` (Silero + local Piper). See `pcc-deploy.toml`.
-4. Push to `main` (or click Deploy). Start a session with Daily:
+2. Health check path: `/health`. Use at least a Standard instance (Silero + local Piper need RAM/CPU).
+3. Push to `main` (or click Deploy). Confirm:
 
    ```bash
-   curl --request POST "https://api.pipecat.daily.co/v1/public/heybassh/start" \
-     --header "Authorization: Bearer pk_YOUR_PUBLIC_KEY" \
+   curl "https://YOUR-SERVICE.onrender.com/health"
+   ```
+
+   Start a Daily session:
+
+   ```bash
+   curl --request POST "https://YOUR-SERVICE.onrender.com/start" \
      --header "Content-Type: application/json" \
-     --data "{\"createDailyRoom\": true}"
+     --data "{\"createDailyRoom\": true, \"transport\": \"daily\"}"
    ```
 
 ### Frontend (Vercel)
 
 1. Set the Vercel root directory to `client`.
-2. Set `BOT_START_URL` to `https://api.pipecat.daily.co/v1/public/heybassh/start`.
-3. Set `BOT_START_PUBLIC_API_KEY` to your Pipecat Cloud **public** API key.
+2. Set `BOT_START_URL` to `https://YOUR-SERVICE.onrender.com/start`.
+3. Do not set `BOT_START_PUBLIC_API_KEY` unless you add matching auth on the bot.
 
 ## Project Structure
 
 ```
 Heybassh/
-├── Dockerfile           # Pipecat Cloud GitHub deploy (repo root)
-├── pcc-deploy.toml      # Pipecat Cloud GitHub deploy settings
+├── Dockerfile           # Render / Docker bot server (repo root)
+├── pcc-deploy.toml      # Optional Pipecat Cloud settings (not used on Render)
 ├── server/              # Python bot
 │   ├── bot.py           # Voice pipeline + teacher persona
 │   ├── english_teacher.py
