@@ -7,7 +7,7 @@ A British English teacher voice agent: Speech-to-Text → LLM → Text-to-Speech
 - **Bot Type**: Web
 - **Transport(s)**: Daily (Render), WebSocket, SmallWebRTC
 - **Pipeline**: Cascade
-  - **STT**: Google Gemini
+  - **STT**: Local Moonshine
   - **LLM**: Google Gemini
   - **TTS**: Local Piper British voice (`en_GB-cori-medium`)
 - **Tools**: load the current 22-lesson curriculum and save scores (pass at 70+)
@@ -34,7 +34,7 @@ Progress is stored in a JSON file on the bot instance (fine for testing; it will
 
    ```bash
    cp .env.example .env
-   # Required: GOOGLE_API_KEY (STT + LLM)
+   # Required: GOOGLE_API_KEY (LLM)
    # TTS defaults to local British Piper voice en_GB-cori-medium (downloaded on first run)
    ```
 
@@ -115,11 +115,10 @@ This repo’s root `Dockerfile` starts the local Pipecat runner (`POST /start`, 
 1. In the Render service, set:
    - `GOOGLE_API_KEY`
    - `GOOGLE_MODEL` (`gemini-3-flash-preview`)
-   - `GOOGLE_STT_MODEL` (`gemini-3.5-transcribe-live`)
-   - `DAILY_API_KEY` (required for Daily rooms)
+   - `DAILY_API_KEY` (required: Render Connect uses Daily, not SmallWebRTC)
    - `PIPER_TTS_ENGINE=local`
    - `PIPER_TTS_VOICE=en_GB-cori-medium`
-2. Health check path: `/health`. Use at least a Standard instance (Silero + local Piper need RAM/CPU).
+2. Health check path: `/health`. Use at least a Standard instance (Silero + local Piper + Moonshine need RAM/CPU). Do not use SmallWebRTC on Render; ICE cannot complete through the HTTP proxy. If you have no Daily key, set `PIPECAT_TRANSPORT=websocket` instead.
 3. Push to `main` (or click Deploy). Confirm:
 
    ```bash
