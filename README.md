@@ -5,7 +5,7 @@ A British English teacher voice agent: Speech-to-Text → LLM → Text-to-Speech
 ## Configuration
 
 - **Bot Type**: Web
-- **Transport(s)**: Daily (Render), WebSocket, SmallWebRTC
+- **Transport(s)**: SmallWebRTC, WebSocket, Daily
 - **Pipeline**: Cascade
   - **STT**: Local Moonshine
   - **LLM**: Google Gemini
@@ -115,23 +115,17 @@ This repo’s root `Dockerfile` starts the local Pipecat runner (`POST /start`, 
 1. In the Render service, set:
    - `GOOGLE_API_KEY`
    - `GOOGLE_MODEL` (`gemini-3-flash-preview`)
-   - `DAILY_API_KEY` (required: Render Connect uses Daily, not SmallWebRTC)
    - `PIPER_TTS_ENGINE=local`
    - `PIPER_TTS_VOICE=en_GB-cori-medium`
-2. Health check path: `/health`. Use at least a Standard instance (Silero + local Piper + Moonshine need RAM/CPU). Do not use SmallWebRTC on Render; ICE cannot complete through the HTTP proxy. If you have no Daily key, set `PIPECAT_TRANSPORT=websocket` instead.
+   - `DAILY_API_KEY` only if you use Daily
+2. Health check path: `/health`. Use at least a Standard instance (Silero + local Piper + Moonshine need RAM/CPU).
 3. Push to `main` (or click Deploy). Confirm:
 
    ```bash
    curl "https://YOUR-SERVICE.onrender.com/health"
    ```
 
-   Start a Daily session:
-
-   ```bash
-   curl --request POST "https://YOUR-SERVICE.onrender.com/start" \
-     --header "Content-Type: application/json" \
-     --data "{\"createDailyRoom\": true, \"transport\": \"daily\"}"
-   ```
+   The hosted UI uses SmallWebRTC. Daily is optional and needs `DAILY_API_KEY`.
 
 ### Frontend (Vercel)
 

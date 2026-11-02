@@ -32,5 +32,5 @@ RUN PYTHONPATH=. uv run python -c "from pipecat.services.moonshine.stt import Mo
 
 EXPOSE 7860
 
-# Render sets PORT. Default to Daily: SmallWebRTC cannot complete ICE through Render's proxy.
-CMD ["sh", "-c", "exec python bot.py --host 0.0.0.0 --port ${PORT:-7860} -t ${PIPECAT_TRANSPORT:-daily}"]
+# Render sets PORT. Do not force Daily; the hosted UI uses SmallWebRTC.
+CMD ["sh", "-c", "if [ -n \"$PIPECAT_TRANSPORT\" ]; then exec python bot.py --host 0.0.0.0 --port ${PORT:-7860} -t \"$PIPECAT_TRANSPORT\"; else exec python bot.py --host 0.0.0.0 --port ${PORT:-7860}; fi"]
