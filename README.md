@@ -7,7 +7,7 @@ A British English teacher voice agent: Speech-to-Text → LLM → Text-to-Speech
 - **Bot Type**: Web
 - **Transport(s)**: Daily (Render), WebSocket, SmallWebRTC
 - **Pipeline**: Cascade
-  - **STT**: Deepgram
+  - **STT**: Google Gemini
   - **LLM**: Google Gemini
   - **TTS**: Local Piper British voice (`en_GB-cori-medium`)
 - **Tools**: load the current 22-lesson curriculum and save scores (pass at 70+)
@@ -34,7 +34,7 @@ Progress is stored in a JSON file on the bot instance (fine for testing; it will
 
    ```bash
    cp .env.example .env
-   # Required: DEEPGRAM_API_KEY (STT), GOOGLE_API_KEY (LLM)
+   # Required: GOOGLE_API_KEY (STT + LLM)
    # TTS defaults to local British Piper voice en_GB-cori-medium (downloaded on first run)
    ```
 
@@ -113,9 +113,9 @@ uv run python -m unittest tests.test_english_teacher tests.test_piper_tts
 This repo’s root `Dockerfile` starts the local Pipecat runner (`POST /start`, `GET /health`) so Render can host it. Use a **Docker** web service, repo root as the build context, Dockerfile path `Dockerfile`, and leave the start command empty.
 
 1. In the Render service, set:
-   - `DEEPGRAM_API_KEY`
    - `GOOGLE_API_KEY`
    - `GOOGLE_MODEL` (`gemini-3-flash-preview`)
+   - `GOOGLE_STT_MODEL` (`gemini-3.5-transcribe-live`)
    - `DAILY_API_KEY` (required for Daily rooms)
    - `PIPER_TTS_ENGINE=local`
    - `PIPER_TTS_VOICE=en_GB-cori-medium`
