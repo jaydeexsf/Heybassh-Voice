@@ -8,7 +8,7 @@ A British English teacher voice agent: Speech-to-Text → LLM → Text-to-Speech
 - **Transport(s)**: SmallWebRTC, WebSocket, Daily
 - **Pipeline**: Cascade
   - **STT**: Local Moonshine
-  - **LLM**: Google Gemini
+  - **LLM**: GroqCloud (`llama-3.1-8b-instant`)
   - **TTS**: Local Piper British voice (`en_GB-cori-medium`)
 - **Tools**: load the current 22-lesson curriculum and save scores (pass at 70+)
 
@@ -34,7 +34,7 @@ Progress is stored in a JSON file on the bot instance (fine for testing; it will
 
    ```bash
    cp .env.example .env
-   # Required: GOOGLE_API_KEY (LLM)
+   # Required: GROQ_API_KEY (LLM)
    # TTS defaults to local British Piper voice en_GB-cori-medium (downloaded on first run)
    ```
 
@@ -113,8 +113,9 @@ uv run python -m unittest tests.test_english_teacher tests.test_piper_tts
 This repo’s root `Dockerfile` starts the local Pipecat runner (`POST /start`, `GET /health`) so Render can host it. Use a **Docker** web service, repo root as the build context, Dockerfile path `Dockerfile`, and leave the start command empty.
 
 1. In the Render service, set:
-   - `GOOGLE_API_KEY`
-   - `GOOGLE_MODEL` (`gemini-3-flash-preview`)
+   - `GROQ_API_KEY`
+   - `GROQ_MODEL` (`llama-3.1-8b-instant` or `llama-3.3-70b-versatile`)
+   - `GROQ_BASE_URL` (`https://api.groq.com/openai/v1`)
    - `PIPER_TTS_ENGINE=local`
    - `PIPER_TTS_VOICE=en_GB-cori-medium`
    - `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` (required for the hosted Connect UI)
