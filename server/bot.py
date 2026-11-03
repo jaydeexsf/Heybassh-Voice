@@ -21,6 +21,16 @@ Run the bot using::
 """
 
 import os
+import sys
+
+from ssl_env import sanitize_sslkeylogfile
+
+# Must run before aiohttp/google create an SSL context.
+sanitize_sslkeylogfile()
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -53,6 +63,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from english_teacher_api import register_english_teacher_routes
 from english_teacher_tools import ENGLISH_TEACHER_TOOLS
+from ice_servers import apply_ice_servers_env, has_turn, ice_candidate_type_counts, ice_server_urls
 from piper_tts import (
     DEFAULT_PIPER_TTS_BASE_URL,
     DEFAULT_PIPER_TTS_ENGINE,
@@ -231,6 +242,7 @@ async def bot(runner_args: RunnerArguments):
             )
         case SmallWebRTCRunnerArguments():
             webrtc_connection: SmallWebRTCConnection = runner_args.webrtc_connection
+            _attach_webrtc_ice_diagnostics(webrtc_connection)
 
             transport = SmallWebRTCTransport(
                 webrtc_connection=webrtc_connection,
@@ -271,5 +283,65 @@ async def bot(runner_args: RunnerArguments):
     await run_bot(transport, runner_args)
 
 
+def _attach_webrtc_ice_diagnostics(connection: SmallWebRTCConnection) -> None:
+    """Log ICE candidate types and peer-connection lifecycle without secrets."""
+    urls = ice_server_urls(
+        [
+            {
+                "urls": getattr(server, "urls", []),
+                "username": getattr(server, "username", None),
+                "credential": getattr(server, "credential", None),
+            }
+            for server in (getattr(connection, "ice_servers", None) or [])
+        ]
+    )
+    logger.info(f"SmallWebRTC pc_id={connection.pc_id} ice_urls={urls}")
+    if not any(url.lower().startswith("turn") for url in urls):
+        logger.warning(
+            "SmallWebRTC has no TURN server. On Render, ICE stays in checking "
+            "and the hosted UI will reuse pc_id / renegotiate until it fails. "
+            "Set TURN_URLS, TURN_USERNAME, and TURN_CREDENTIAL."
+        )
+
+    answer = connection.get_answer() if hasattr(connection, "get_answer") else None
+    sdp = (answer or {}).get("sdp") if isinstance(answer, dict) else None
+    if isinstance(sdp, str) and sdp:
+        counts = ice_candidate_type_counts(sdp)
+        logger.info(f"SmallWebRTC local ICE candidates {counts}")
+        if counts["relay"] == 0:
+            logger.warning(
+                "SmallWebRTC answer has no relay candidates. Direct host/srflx "
+                "paths cannot complete through Render's HTTP proxy."
+            )
+
+    @connection.event_handler("connected")
+    async def on_webrtc_connected(webrtc_connection):
+        logger.info(f"SmallWebRTC connected pc_id={webrtc_connection.pc_id}")
+
+    @connection.event_handler("failed")
+    async def on_webrtc_failed(webrtc_connection):
+        logger.error(f"SmallWebRTC failed pc_id={webrtc_connection.pc_id}")
+
+    @connection.event_handler("disconnected")
+    async def on_webrtc_disconnected(webrtc_connection):
+        logger.warning(f"SmallWebRTC disconnected pc_id={webrtc_connection.pc_id}")
+
+    @connection.event_handler("closed")
+    async def on_webrtc_closed(webrtc_connection):
+        logger.warning(f"SmallWebRTC closed pc_id={webrtc_connection.pc_id}")
+
+    @connection.event_handler("track-started")
+    async def on_webrtc_track_started(webrtc_connection, track):
+        kind = getattr(track, "kind", track)
+        logger.info(f"SmallWebRTC track started kind={kind} pc_id={webrtc_connection.pc_id}")
+
+
 if __name__ == "__main__":
+    ice_servers = apply_ice_servers_env()
+    logger.info(f"ICE server URLs: {ice_server_urls(ice_servers)}")
+    if not has_turn(ice_servers):
+        logger.warning(
+            "No TURN credentials configured. Local SmallWebRTC can still work; "
+            "Render Connect needs TURN_URLS, TURN_USERNAME, and TURN_CREDENTIAL."
+        )
     main()

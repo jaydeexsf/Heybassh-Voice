@@ -117,6 +117,7 @@ This repo’s root `Dockerfile` starts the local Pipecat runner (`POST /start`, 
    - `GOOGLE_MODEL` (`gemini-3-flash-preview`)
    - `PIPER_TTS_ENGINE=local`
    - `PIPER_TTS_VOICE=en_GB-cori-medium`
+   - `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` (required for the hosted Connect UI)
    - `DAILY_API_KEY` only if you use Daily
 2. Health check path: `/health`. Use at least a Standard instance (Silero + local Piper + Moonshine need RAM/CPU).
 3. Push to `main` (or click Deploy). Confirm:
@@ -125,7 +126,7 @@ This repo’s root `Dockerfile` starts the local Pipecat runner (`POST /start`, 
    curl "https://YOUR-SERVICE.onrender.com/health"
    ```
 
-   The hosted UI uses SmallWebRTC. Daily is optional and needs `DAILY_API_KEY`.
+   The hosted UI (`/client/`) uses SmallWebRTC. Render does not forward UDP, so Connect stays on ICE checking unless TURN is set. After deploy, logs should show `relay` candidates and `SmallWebRTC connected`. Daily is optional and needs `DAILY_API_KEY`.
 
 ### Frontend (Vercel)
 
@@ -144,7 +145,9 @@ Heybassh/
 │   ├── english_teacher.py
 │   ├── english_teacher_api.py
 │   ├── english_teacher_tools.py
+│   ├── ice_servers.py
 │   ├── piper_tts.py
+│   ├── ssl_env.py
 │   ├── elevenlabs_tools.json
 │   └── Dockerfile
 ├── client/              # Next.js voice UI

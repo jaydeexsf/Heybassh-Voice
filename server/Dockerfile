@@ -22,7 +22,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-install-project --no-dev
 
-COPY bot.py english_teacher.py english_teacher_api.py english_teacher_tools.py piper_tts.py ./
+COPY bot.py english_teacher.py english_teacher_api.py english_teacher_tools.py ice_servers.py piper_tts.py ssl_env.py ./
 
 RUN PYTHONPATH=. uv run python -c "from piper_tts import ensure_piper_voice; ensure_piper_voice('en_GB-cori-medium')"
 

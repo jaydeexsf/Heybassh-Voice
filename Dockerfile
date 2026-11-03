@@ -22,7 +22,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 COPY server/pyproject.toml server/uv.lock ./
 RUN uv sync --locked --no-install-project --no-dev
 
-COPY server/bot.py server/english_teacher.py server/english_teacher_api.py server/english_teacher_tools.py server/piper_tts.py ./
+COPY server/bot.py server/english_teacher.py server/english_teacher_api.py server/english_teacher_tools.py server/ice_servers.py server/piper_tts.py server/ssl_env.py ./
 
 # Bake the British Piper voice so sessions do not download 61MB at startup
 RUN PYTHONPATH=. uv run python -c "from piper_tts import ensure_piper_voice; ensure_piper_voice('en_GB-cori-medium')"
