@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import wave
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
@@ -25,6 +26,10 @@ DEFAULT_PIPER_TTS_TIMEOUT_SECS = 60.0
 DEFAULT_PIPER_TTS_VOICE = "en_GB-cori-medium"
 DEFAULT_PIPER_TTS_ENGINE = "local"
 DEFAULT_PIPER_VOICES_DIR = Path(__file__).resolve().parent / "voices"
+
+_voice_lock = threading.Lock()
+_synth_lock = threading.Lock()
+_voice_cache: dict[tuple[str, str], tuple[Path, Any]] = {}
 
 _VOICE_PATTERN = re.compile(
     r"^(?P<lang_family>[^-]+)_(?P<lang_region>[^-]+)-(?P<voice_name>[^-]+)-(?P<voice_quality>.+)$"
@@ -187,6 +192,32 @@ def load_piper_voice(model_path: Path):
     from piper import PiperVoice
 
     return PiperVoice.load(model_path)
+
+
+def get_cached_piper_voice(voice: str, voices_dir: Path | None = None) -> tuple[Path, Any]:
+    """Load a Piper voice once per process and reuse it across sessions."""
+    dest_dir = Path(voices_dir or DEFAULT_PIPER_VOICES_DIR)
+    key = (voice, str(dest_dir))
+    with _voice_lock:
+        cached = _voice_cache.get(key)
+        if cached is not None:
+            return cached
+        model_path = ensure_piper_voice(voice, dest_dir)
+        loaded = load_piper_voice(model_path)
+        _voice_cache[key] = (model_path, loaded)
+        return model_path, loaded
+
+
+def warmup_piper_voice(voice: str, voices_dir: Path | None = None) -> Path:
+    """Load the local Piper voice at process start so Connect is not blocked."""
+    model_path, _loaded = get_cached_piper_voice(voice, voices_dir)
+    return model_path
+
+
+def clear_piper_voice_cache() -> None:
+    """Drop cached Piper voices. Used by tests."""
+    with _voice_lock:
+        _voice_cache.clear()
 
 
 def synthesize_local_wav(text: str, model_path: Path, voice=None) -> bytes:
@@ -353,11 +384,64 @@ class PiperHttpTTSService(TTSService):
     async def _ensure_local_voice(self):
         if self._piper_voice is not None:
             return self._piper_voice
-        self._model_path = await asyncio.to_thread(
-            ensure_piper_voice, self._voice, self._voices_dir
+        self._model_path, self._piper_voice = await asyncio.to_thread(
+            get_cached_piper_voice, self._voice, self._voices_dir
         )
-        self._piper_voice = await asyncio.to_thread(load_piper_voice, self._model_path)
         return self._piper_voice
+
+    async def _pcm_frames_from_local_voice(
+        self, text: str, piper_voice: Any, context_id: str
+    ) -> AsyncGenerator[Frame, None]:
+        """Stream Piper PCM as it is generated so the bot can start speaking sooner."""
+        if not hasattr(piper_voice, "synthesize"):
+            wav_bytes = await asyncio.to_thread(
+                synthesize_local_wav, text, self._model_path, piper_voice
+            )
+            async for frame in self._pcm_frames_from_wav(wav_bytes, text, context_id):
+                yield frame
+            return
+
+        queue: asyncio.Queue[tuple[str, Any, int | None]] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def produce() -> None:
+            try:
+                with _synth_lock:
+                    for chunk in piper_voice.synthesize(text):
+                        pcm = getattr(chunk, "audio_int16_bytes", None)
+                        if pcm is None:
+                            array = getattr(chunk, "audio_int16_array", None)
+                            pcm = array.tobytes() if array is not None else b""
+                        rate = int(getattr(chunk, "sample_rate", 22050) or 22050)
+                        loop.call_soon_threadsafe(queue.put_nowait, ("chunk", pcm, rate))
+                loop.call_soon_threadsafe(queue.put_nowait, ("done", None, None))
+            except Exception as exc:
+                loop.call_soon_threadsafe(queue.put_nowait, ("error", exc, None))
+
+        producer = threading.Thread(target=produce, daemon=True)
+        producer.start()
+        started_usage = False
+        try:
+            while True:
+                kind, payload, rate = await queue.get()
+                if kind == "error":
+                    raise payload
+                if kind == "done":
+                    break
+                if not payload or rate is None:
+                    continue
+                if not started_usage:
+                    await self.start_tts_usage_metrics(text)
+                    started_usage = True
+                async for frame in self._stream_audio_frames_from_iterator(
+                    _iter_chunks(payload, self.chunk_size),
+                    in_sample_rate=rate,
+                    context_id=context_id,
+                ):
+                    await self.stop_ttfb_metrics()
+                    yield frame
+        finally:
+            producer.join(timeout=0.1)
 
     async def _pcm_frames_from_wav(
         self, wav_bytes: bytes, text: str, context_id: str
@@ -397,15 +481,13 @@ class PiperHttpTTSService(TTSService):
             if self._engine == "local":
                 piper_voice = await self._ensure_local_voice()
                 try:
-                    wav_bytes = await asyncio.to_thread(
-                        synthesize_local_wav, text, self._model_path, piper_voice
-                    )
+                    async for frame in self._pcm_frames_from_local_voice(
+                        text, piper_voice, context_id
+                    ):
+                        yield frame
                 except Exception as exc:
                     logger.exception(f"{self} local synthesis failed: {exc}")
                     yield ErrorFrame(error=f"Piper TTS local synthesis failed: {exc}")
-                    return
-                async for frame in self._pcm_frames_from_wav(wav_bytes, text, context_id):
-                    yield frame
                 return
 
             aiohttp = _get_aiohttp()

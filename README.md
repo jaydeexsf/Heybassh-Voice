@@ -8,7 +8,7 @@ A British English teacher voice agent: Speech-to-Text → LLM → Text-to-Speech
 - **Transport(s)**: SmallWebRTC, WebSocket, Daily
 - **Pipeline**: Cascade
   - **STT**: Local Moonshine
-  - **LLM**: GroqCloud (`llama-3.1-8b-instant`)
+  - **LLM**: GroqCloud (`openai/gpt-oss-20b` by default)
   - **TTS**: Local Piper British voice (`en_GB-cori-medium`)
 - **Tools**: load the current 22-lesson curriculum and save scores (pass at 70+)
 
@@ -101,7 +101,7 @@ Unit tests:
 
 ```bash
 cd server
-uv run python -m unittest tests.test_english_teacher tests.test_piper_tts
+uv run python -m unittest tests.test_english_teacher tests.test_piper_tts tests.test_bot_latency
 ```
 
 `server/elevenlabs_tools.json` is the webhook tool list to paste into ElevenLabs. While testing from ElevenLabs on your laptop, the webhook URL must be public (for example an ngrok tunnel to port 7860). The local Pipecat voice UI does **not** need that: it calls the tools in-process.
@@ -114,13 +114,13 @@ This repo’s root `Dockerfile` starts the local Pipecat runner (`POST /start`, 
 
 1. In the Render service, set:
    - `GROQ_API_KEY`
-   - `GROQ_MODEL` (`llama-3.1-8b-instant` or `llama-3.3-70b-versatile`)
+   - `GROQ_MODEL` (`openai/gpt-oss-20b`; optional, this is also the code default)
    - `GROQ_BASE_URL` (`https://api.groq.com/openai/v1`)
    - `PIPER_TTS_ENGINE=local`
    - `PIPER_TTS_VOICE=en_GB-cori-medium`
    - `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` (required for the hosted Connect UI)
    - `DAILY_API_KEY` only if you use Daily
-2. Health check path: `/health`. Use at least a Standard instance (Silero + local Piper + Moonshine need RAM/CPU).
+2. Health check path: `/health`. Use at least a Standard instance that stays awake (Silero + local Piper + Moonshine need RAM/CPU). A spun-down Render instance makes Connect feel slow even after these code changes.
 3. Push to `main` (or click Deploy). Confirm:
 
    ```bash
@@ -128,6 +128,17 @@ This repo’s root `Dockerfile` starts the local Pipecat runner (`POST /start`, 
    ```
 
    The hosted UI (`/client/`) uses SmallWebRTC. Render does not forward UDP, so Connect stays on ICE checking unless TURN is set. After deploy, logs should show `relay` candidates and `SmallWebRTC connected`. Daily is optional and needs `DAILY_API_KEY`.
+
+### Why Connect / replies can still feel slow
+
+The bot now warms Piper, Moonshine, and Silero when the process starts, streams Piper audio as it is generated, skips the first Groq tool round-trip by loading the lesson into context, and ends the user turn on a short silence timeout instead of another ONNX model.
+
+What code cannot remove:
+
+- **Render cold start**: a sleeping instance still takes tens of seconds. Keep the service awake.
+- **CPU**: Moonshine + Piper + Silero all run on the same small CPU. A larger instance is the real reply-speed upgrade.
+- **Groq**: each spoken turn waits on Groq. Free/dev rate limits and `openai/gpt-oss-20b` add latency you cannot tune locally.
+- **TURN / ICE**: first Connect still has to finish WebRTC before anyone can talk.
 
 ### Frontend (Vercel)
 

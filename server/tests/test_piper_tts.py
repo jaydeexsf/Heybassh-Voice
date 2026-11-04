@@ -57,7 +57,9 @@ from piper_tts import (
     DEFAULT_PIPER_TTS_VOICE,
     PiperHttpTTSService,
     PiperTTSError,
+    clear_piper_voice_cache,
     decode_wav_to_pcm16_mono,
+    get_cached_piper_voice,
     huggingface_voice_url,
 )
 
@@ -290,6 +292,58 @@ class PiperHttpTTSServiceTests(unittest.IsolatedAsyncioTestCase):
         audio_frames = [frame for frame in frames if isinstance(frame, TTSAudioRawFrame)]
         self.assertTrue(audio_frames)
         self.assertEqual(b"".join(frame.audio for frame in audio_frames), _pack_pcm16(samples))
+
+    async def test_local_engine_streams_synthesize_chunks(self):
+        samples = [111, -222, 333]
+        pcm = _pack_pcm16(samples)
+
+        class Chunk:
+            audio_int16_bytes = pcm
+            sample_rate = 16000
+
+        class Voice:
+            def synthesize(self, text):
+                yield Chunk()
+
+        session = FakeSession()
+        tts = PiperHttpTTSService(
+            base_url="https://piper.example",
+            aiohttp_session=session,  # type: ignore[arg-type]
+            engine="local",
+            voice="en_GB-cori-medium",
+        )
+        tts._sample_rate = 16000
+        tts._model_path = Path("en_GB-cori-medium.onnx")
+        tts._piper_voice = Voice()
+        tts.start_tts_usage_metrics = MagicMock(side_effect=lambda *args, **kwargs: asyncio.sleep(0))  # type: ignore[method-assign]
+        tts.start_ttfb_metrics = MagicMock(side_effect=lambda *args, **kwargs: asyncio.sleep(0))  # type: ignore[method-assign]
+        tts.stop_ttfb_metrics = MagicMock(side_effect=lambda *args, **kwargs: asyncio.sleep(0))  # type: ignore[method-assign]
+
+        frames = [frame async for frame in tts.run_tts("Hello Britain.", "ctx-10")]
+        audio_frames = [frame for frame in frames if isinstance(frame, TTSAudioRawFrame)]
+        self.assertTrue(audio_frames)
+        self.assertEqual(session.posts, [])
+        self.assertEqual(b"".join(frame.audio for frame in audio_frames), pcm)
+
+
+class VoiceCacheTests(unittest.TestCase):
+    def tearDown(self):
+        clear_piper_voice_cache()
+
+    def test_cached_voice_is_loaded_once(self):
+        voice = object()
+        with (
+            patch("piper_tts.ensure_piper_voice", return_value=Path("en_GB-cori-medium.onnx")) as ensure,
+            patch("piper_tts.load_piper_voice", return_value=voice) as load,
+        ):
+            first_path, first_voice = get_cached_piper_voice("en_GB-cori-medium", Path("voices"))
+            second_path, second_voice = get_cached_piper_voice("en_GB-cori-medium", Path("voices"))
+
+        self.assertEqual(first_path, second_path)
+        self.assertIs(first_voice, second_voice)
+        self.assertIs(second_voice, voice)
+        ensure.assert_called_once()
+        load.assert_called_once()
 
 
 class VoiceDownloadTests(unittest.TestCase):

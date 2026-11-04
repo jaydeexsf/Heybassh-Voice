@@ -20,6 +20,7 @@ Run the bot using::
     uv run bot.py
 """
 
+import json
 import os
 import sys
 
@@ -35,6 +36,7 @@ if hasattr(sys.stderr, "reconfigure"):
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import LLMRunFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -61,6 +63,7 @@ from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 from pipecat.workers.runner import WorkerRunner
 
+from english_teacher import DEFAULT_STUDENT_ID, build_lesson_response
 from english_teacher_api import register_english_teacher_routes
 from english_teacher_tools import ENGLISH_TEACHER_TOOLS
 from ice_servers import apply_ice_servers_env, has_turn, ice_candidate_type_counts, ice_server_urls
@@ -69,7 +72,20 @@ from piper_tts import (
     DEFAULT_PIPER_TTS_ENGINE,
     DEFAULT_PIPER_TTS_VOICE,
     PiperHttpTTSService,
+    warmup_piper_voice,
 )
+
+try:
+    from pipecat.turns.user_stop import SpeechTimeoutUserTurnStopStrategy
+    from pipecat.turns.user_turn_strategies import UserTurnStrategies
+
+    # Smart Turn is another ONNX model on the same CPU as Moonshine and Piper.
+    # A short silence timeout replies faster on Render's small instances.
+    FAST_USER_TURN_STRATEGIES = UserTurnStrategies(
+        stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.45)]
+    )
+except ImportError:
+    FAST_USER_TURN_STRATEGIES = None
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
@@ -81,23 +97,88 @@ except Exception as exc:
     logger.warning(f"Local teacher HTTP routes were not registered: {exc}")
 
 DEFAULT_GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
 DEFAULT_MOONSHINE_STT_MODEL = "tiny"
+
+_cached_moonshine_transcriber = None
+_silero_warmed = False
 
 BRITISH_ENGLISH_TEACHER_INSTRUCTION = """
 You are Heybassh, a warm, precise British English teacher.
 Speak British English only. Your replies are spoken aloud, so do not use emojis, bullet points, markdown, or URLs.
 
-At the start of every session, call get_student_lesson. If you do not know the student id, use john.
-Then greet the student by name, briefly recap their level and current lesson, and begin teaching that lesson.
+If lesson data is already in the conversation, use it. Otherwise call get_student_lesson. If you do not know the student id, use john.
+Greet the student by name, briefly recap their level and current lesson, and begin teaching that lesson.
 
-Teach one lesson at a time using current_lesson_details. Use short turns. Ask the student to speak. Correct mistakes kindly, give the British form, and get them to repeat it.
+Teach one lesson at a time using current_lesson_details. Use short turns of one or two spoken sentences. Ask the student to speak. Correct mistakes kindly, give the British form, and get them to repeat it.
 Use their strengths, weaknesses, recent mistakes, and vocabulary from the tool result.
 
 When a lesson is finished, score them from 0 to 100 and call save_lesson_progress. Set lesson_completed to true only if you actually completed the lesson. They pass and unlock the next lesson at 70 or above. Tell them the result in plain speech, then either continue to the next lesson or practise the weak points.
 
 Never invent progress. Always load and save through the tools.
 """.strip()
+
+
+def _opening_lesson_message(student_id: str = DEFAULT_STUDENT_ID) -> dict[str, str]:
+    """Put lesson data in context so the first greeting skips a Groq tool round-trip."""
+    lesson = build_lesson_response(student_id)
+    return {
+        "role": "user",
+        "content": (
+            "Student lesson data is already loaded. Do not call get_student_lesson "
+            "unless the student gives a different id.\n"
+            f"{json.dumps(lesson, ensure_ascii=True)}\n"
+            "Greet the student by name in two short spoken sentences and begin the current lesson."
+        ),
+    }
+
+
+def _make_stt() -> MoonshineSTTService:
+    """Create Moonshine STT, reusing the process-wide ONNX transcriber."""
+    global _cached_moonshine_transcriber
+    moonshine_model = (os.getenv("MOONSHINE_STT_MODEL") or DEFAULT_MOONSHINE_STT_MODEL).strip()
+    kwargs = {
+        "settings": MoonshineSTTService.Settings(
+            model=moonshine_model or DEFAULT_MOONSHINE_STT_MODEL,
+            language=Language.EN,
+        ),
+        "ttfs_p99_latency": 0.8,
+    }
+    if _cached_moonshine_transcriber is None:
+        stt = MoonshineSTTService(**kwargs)
+        _cached_moonshine_transcriber = getattr(stt, "_transcriber", None)
+        return stt
+
+    cached = _cached_moonshine_transcriber
+
+    class CachedMoonshineSTTService(MoonshineSTTService):
+        def _load(self):
+            return cached
+
+    return CachedMoonshineSTTService(**kwargs)
+
+
+def warmup_local_models() -> None:
+    """Load Piper, Moonshine, and Silero once at process start instead of on first Connect."""
+    global _silero_warmed
+    voice = (os.getenv("PIPER_TTS_VOICE") or DEFAULT_PIPER_TTS_VOICE).strip()
+    try:
+        warmup_piper_voice(voice or DEFAULT_PIPER_TTS_VOICE)
+        logger.info(f"Warmed Piper voice {voice or DEFAULT_PIPER_TTS_VOICE}")
+    except Exception as exc:
+        logger.warning(f"Piper warmup skipped: {exc}")
+    try:
+        _make_stt()
+        logger.info("Warmed Moonshine STT")
+    except Exception as exc:
+        logger.warning(f"Moonshine warmup skipped: {exc}")
+    if not _silero_warmed:
+        try:
+            SileroVADAnalyzer()
+            _silero_warmed = True
+            logger.info("Warmed Silero VAD")
+        except Exception as exc:
+            logger.warning(f"Silero VAD warmup skipped: {exc}")
 
 
 def _require_env(name: str) -> str:
@@ -121,13 +202,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     logger.info("Starting bot")
 
     groq_api_key = _require_env("GROQ_API_KEY")
-    moonshine_model = (os.getenv("MOONSHINE_STT_MODEL") or DEFAULT_MOONSHINE_STT_MODEL).strip()
-    stt = MoonshineSTTService(
-        settings=MoonshineSTTService.Settings(
-            model=moonshine_model or DEFAULT_MOONSHINE_STT_MODEL,
-            language=Language.EN,
-        ),
-    )
+    stt = _make_stt()
 
     tts = PiperHttpTTSService(
         base_url=os.getenv("PIPER_TTS_BASE_URL", DEFAULT_PIPER_TTS_BASE_URL),
@@ -141,7 +216,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     llm = OpenAILLMService(
         api_key=groq_api_key,
         base_url=groq_base_url or DEFAULT_GROQ_BASE_URL,
-        retry_timeout_secs=30.0,
+        retry_timeout_secs=12.0,
         retry_on_timeout=True,
         settings=OpenAILLMService.Settings(
             model=groq_model or DEFAULT_GROQ_MODEL,
@@ -151,12 +226,16 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     # Groq's OpenAI-compatible API does not accept the "developer" role.
     llm.supports_developer_role = False
 
+    user_params_kwargs: dict = {
+        "vad_analyzer": SileroVADAnalyzer(params=VADParams(stop_secs=0.15)),
+    }
+    if FAST_USER_TURN_STRATEGIES is not None:
+        user_params_kwargs["user_turn_strategies"] = FAST_USER_TURN_STRATEGIES
+
     context = LLMContext(tools=ENGLISH_TEACHER_TOOLS)
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(
-            vad_analyzer=SileroVADAnalyzer(),
-        ),
+        user_params=LLMUserAggregatorParams(**user_params_kwargs),
     )
 
     pipeline = Pipeline(
@@ -187,15 +266,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         if conversation_started:
             return
         conversation_started = True
-        context.add_message(
-            {
-                "role": "developer",
-                "content": (
-                    "Call get_student_lesson for student_id john, then greet the student "
-                    "and start the current lesson. Keep the greeting to two short sentences."
-                ),
-            }
-        )
+        context.add_message(_opening_lesson_message())
         await worker.queue_frames([LLMRunFrame()])
 
     @worker.rtvi.event_handler("on_client_ready")
@@ -342,6 +413,7 @@ def _attach_webrtc_ice_diagnostics(connection: SmallWebRTCConnection) -> None:
 
 
 if __name__ == "__main__":
+    warmup_local_models()
     ice_servers = apply_ice_servers_env()
     logger.info(f"ICE server URLs: {ice_server_urls(ice_servers)}")
     if not has_turn(ice_servers):
